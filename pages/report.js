@@ -1,0 +1,1 @@
+import dynamic from 'next/dynamic'; const SightingForm = dynamic(() => import('../components/SightingForm'), { ssr: false }); export default function Report() { return <main className='p-4'><SightingForm /></main>; }

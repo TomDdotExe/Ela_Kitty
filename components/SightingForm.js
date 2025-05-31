@@ -1,0 +1,1 @@
+export default function SightingForm() { return <p>Sighting Form (placeholder)</p>; }

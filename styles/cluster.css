@@ -1,0 +1,24 @@
+/* styles/cluster.css */
+.marker-cluster-small {
+  background-color: rgba(181, 226, 140, 0.6);
+}
+
+.marker-cluster-medium {
+  background-color: rgba(241, 211, 87, 0.6);
+}
+
+.marker-cluster-large {
+  background-color: rgba(253, 156, 115, 0.6);
+}
+
+.marker-cluster div {
+  background-clip: padding-box;
+  border-radius: 20px;
+  border: 3px solid #fff;
+  color: #000;
+  font: 12px 'Helvetica Neue', Arial, Helvetica, sans-serif;
+  line-height: 40px;
+  text-align: center;
+  width: 40px;
+  height: 40px;
+}
