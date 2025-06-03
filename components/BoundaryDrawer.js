@@ -1,11 +1,10 @@
 // components/BoundaryDrawer.js
-import { useEffect } from 'react';
-import { MapContainer, TileLayer, FeatureGroup } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, GeoJSON } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 
-export default function BoundaryDrawer({ lat, lng, radiusKm, initGeoJSON, onSave, onCancel }) {
+export default function BoundaryDrawer({ lat, lng, initGeoJSON, onSave, onCancel }) {
 
   /* converts draw layer to GeoJSON and hands it back */
   const _save = (e) => {
