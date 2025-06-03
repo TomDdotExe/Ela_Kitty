@@ -1,8 +1,16 @@
-<<<<<<< HEAD
-# Ela Kitty – Full Scaffold Backup
+# Ela Kitty – Stray Cat Reporting
 
-Includes Tailwind + Supabase Auth (email, Google, SMS).
-=======
-# Stray-Cat-App
-test test
->>>>>>> 4e68ed3a207f65623a1041a3ddd39f3b72a3c5da
+Ela Kitty is a Next.js application for reporting stray cat sightings. It
+uses Supabase for authentication and data storage, and Tailwind CSS for the
+UI. Users can sign in via email or Google and mark the location of a sighting
+on an interactive map.
+
+## Required environment variables
+
+Create a `.env.local` file with the following variables:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
