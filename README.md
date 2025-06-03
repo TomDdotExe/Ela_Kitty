@@ -1,8 +1,13 @@
-<<<<<<< HEAD
-# Ela Kitty – Full Scaffold Backup
+# Ela Kitty
 
-Includes Tailwind + Supabase Auth (email, Google, SMS).
-=======
-# Stray-Cat-App
-test test
->>>>>>> 4e68ed3a207f65623a1041a3ddd39f3b72a3c5da
+Ela Kitty is a simple Next.js application for reporting and viewing stray cat locations. It uses Leaflet for map rendering and Supabase for authentication and data storage.
+
+## Environment Variables
+
+Create a `.env.local` file and provide the following variables so the application can connect to Supabase:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=<your Supabase project URL>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your Supabase anon key>
+```
+
