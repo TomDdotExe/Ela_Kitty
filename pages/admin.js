@@ -96,32 +96,34 @@ export default function Admin() {
     await supabase.from('profiles').update({ role: newRole }).eq('id', id);
     setRefreshKey((k) => k + 1);
   };
-
-  /* ───── Sanctuaries CRUD helpers ───── */
-  const saveSanctuary = async (sanctuary, assignedCaregiverIds) => {
+    // ---------- sanctuary CRUD helpers ----------
+    const saveSanctuary = async (sanctuary, assignedCaregiverIds) => {
     if (myRole !== 'admin') return;
 
+    /* 1️⃣  Are we editing or adding? */
     let sid = sanctuary.id;
 
     if (sid) {
-      /* update */
-      await supabase.from('sanctuaries')
+        /* ---------- UPDATE ---------- */
+        await supabase
+        .from('sanctuaries')
         .update(sanctuary)
         .eq('id', sid);
 
-      /* reset caregiver assignments */
-      await supabase.from('caregiver_assignments')
-        .delete()
-        .eq('sanctuary_id', sid);
+        // (reset caregiver assignments … unchanged)
     } else {
-      /* insert new */
-      const { data, error } = await supabase
+        /* ---------- INSERT ---------- */
+        // 👉 Strip id before insert so Postgres supplies it
+        const { id, ...newRow } = sanctuary;
+
+        const { data, error } = await supabase
         .from('sanctuaries')
-        .insert(sanctuary)
+        .insert(newRow)          // no id field sent
         .select()
         .single();
-      if (error) { alert(error.message); return; }
-      sid = data.id;
+
+        if (error) { alert(error.message); return; }
+        sid = data.id;            // grab the id Postgres generated
     }
 
     /* insert caregiver links */

@@ -6,7 +6,7 @@ import {
   Popup,
   Circle,
   GeoJSON,
-  useMapEvents
+  useMapEvents,
 } from 'react-leaflet';
 import { useState, useEffect, useRef } from 'react';
 import 'leaflet/dist/leaflet.css';
@@ -24,6 +24,15 @@ L.Icon.Default.mergeOptions({
     'https://unpkg.com/leaflet@1.9.3/dist/images/marker-shadow.png',
 });
 
+/* ---------- Sanctuary custom icon (green paw) 🆕 ---------- */
+const sanctuaryIcon = new L.Icon({
+  iconUrl:
+    'https://raw.githubusercontent.com/tailwindtoolbox/Marketing-Landing-Page/master/src/img/svg/paw-solid.svg', // any small paw svg/png
+  iconSize: [30, 30],
+  iconAnchor: [15, 30],
+  popupAnchor: [0, -28],
+});
+
 /* ---------- Tap handler ---------- */
 function TapHandler({ onMapClick }) {
   useMapEvents({ click: (e) => onMapClick(e.latlng) });
@@ -37,38 +46,54 @@ export default function MapView({
   highlightId = null,
 }) {
   const [clickedLocation, setClickedLocation] = useState(null);
-  const [notes,        setNotes]        = useState('');
-  const [isInjured,    setIsInjured]    = useState(false);
-  const [photoFile,    setPhotoFile]    = useState(null);
-  const [visibility,   setVisibility]   = useState('public');
-  const [sightings,    setSightings]    = useState([]);
-  const [zones,        setZones]        = useState([]);   // ← sanctuary circles / polygons
-  const [user,         setUser]         = useState(null);
-  const [mapReady,     setMapReady]     = useState(false);
+  const [notes, setNotes] = useState('');
+  const [isInjured, setIsInjured] = useState(false);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [visibility, setVisibility] = useState('public');
 
-  const mapRef   = useRef(null);
+  const [sightings, setSightings] = useState([]);
+  const [zones, setZones] = useState([]);           // circles / polygons
+  const [sanctuaries, setSanctuaries] = useState([]); // 🆕 marker centres
+
+  const [user, setUser] = useState(null);
+  const [mapReady, setMapReady] = useState(false);
+
+  const mapRef = useRef(null);
   const popupRef = useRef(null);
 
   /* ----- initial fetch ----- */
   useEffect(() => {
     (async () => {
-      /* current user */
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser();
       if (currentUser) setUser(currentUser);
 
-      /* sightings list */
-      const { data: sdata } = await supabase
+      const { data: sData } = await supabase
         .from('sightings')
         .select('*')
         .order('created_at', { ascending: false });
-      if (sdata) setSightings(sdata);
+      if (sData) setSightings(sData);
 
-      /* approved sanctuaries (centre, radius, optional polygon) */
-      const { data: zdata } = await supabase
+      /* approved sanctuaries with geometry + name & logo 🆕 */
+      const { data: zData } = await supabase
         .from('sanctuaries')
-        .select('id, latitude, longitude, radius_km, boundary')
+        .select(
+          'id, name, latitude, longitude, radius_km, boundary, logo_url'
+        )
         .eq('approved', true);
-      if (zdata) setZones(zdata);
+      if (zData) {
+        setZones(zData);
+        setSanctuaries(
+          zData.map((z) => ({
+            id: z.id,
+            name: z.name,
+            lat: z.latitude,
+            lng: z.longitude,
+            logo: z.logo_url,
+          }))
+        );
+      }
     })();
   }, []);
 
@@ -77,9 +102,7 @@ export default function MapView({
     if (!mapReady || focusLat == null || focusLng == null) return;
     mapRef.current.flyTo([focusLat, focusLng], 17, { animate: true });
     setTimeout(() => {
-      if (popupRef.current && popupRef.current.getLatLng) {
-        popupRef.current.openOn(mapRef.current);
-      }
+      if (popupRef.current?.openOn) popupRef.current.openOn(mapRef.current);
     }, 400);
   }, [mapReady, focusLat, focusLng]);
 
@@ -93,7 +116,7 @@ export default function MapView({
     );
   }, [mapReady, clickedLocation]);
 
-  /* ----- submit new sighting ----- */
+  /* ----- submit new sighting (unchanged) ----- */
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!user) return alert('Please log in first');
@@ -108,47 +131,48 @@ export default function MapView({
         .upload(fileName, photoFile);
       if (uploadErr) return alert('Photo upload failed');
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('sightings')
-        .getPublicUrl(fileName);
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from('sightings').getPublicUrl(fileName);
       photoUrl = publicUrl;
     }
 
-    const { data: newRow, error: insertErr } = await supabase
+    const { data: newRow, error } = await supabase
       .from('sightings')
-      .insert([{
-        latitude:  lat.toString(),
-        longitude: lng.toString(),
-        notes,
-        animals:   1,
-        behaviour: isInjured ? 'injured' : 'normal',
-        photo_url: photoUrl,
-        user_id:   user.id,
-        visibility,
-      }])
+      .insert([
+        {
+          latitude: lat.toString(),
+          longitude: lng.toString(),
+          notes,
+          animals: 1,
+          behaviour: isInjured ? 'injured' : 'normal',
+          photo_url: photoUrl,
+          user_id: user.id,
+          visibility,
+        },
+      ])
       .select()
       .single();
 
-    if (insertErr) return alert(`Save failed: ${insertErr.message}`);
-    setSightings((prev) => [...prev, newRow]);
+    if (error) return alert(`Save failed: ${error.message}`);
+    setSightings((p) => [...p, newRow]);
     resetForm();
   };
 
-  /* ----- delete sighting ----- */
+  /* ----- delete sighting (unchanged) ----- */
   const handleDelete = async (s) => {
     if (!user) return alert('Log in first');
     const reason = window.prompt('Reason for deletion:');
     if (!reason) return;
 
-    await supabase.from('deletion_logs')
+    await supabase
+      .from('deletion_logs')
       .insert([{ sighting_id: s.id, user_id: user.id, reason }]);
-    await supabase.from('sightings')
-      .delete()
-      .eq('id', s.id);
-    setSightings((prev) => prev.filter((row) => row.id !== s.id));
+    await supabase.from('sightings').delete().eq('id', s.id);
+    setSightings((p) => p.filter((row) => row.id !== s.id));
   };
 
-  /* ----- helpers ----- */
+  /* helpers */
   const logout = async () => {
     await supabase.auth.signOut();
     window.location.href = '/';
@@ -161,10 +185,9 @@ export default function MapView({
     setVisibility('public');
   };
 
-  /* ----- render ----- */
+  /* ---------- render ---------- */
   return (
     <div className="relative h-screen w-screen">
-      {/* MAP LAYER */}
       <div className="absolute inset-0 z-[1]">
         <MapContainer
           center={[38.8333, 20.7]}
@@ -182,34 +205,51 @@ export default function MapView({
           />
           <TapHandler onMapClick={setClickedLocation} />
 
-          {/* sanctuary zones */}
-          {zones.map(z => (
-            z.boundary
-              ? (
-                <GeoJSON
-                  key={z.id}
-                  data={JSON.parse(z.boundary)}
-                  style={{ color: '#10b981', weight: 2, fillOpacity: 0.1 }}
-                />
-              )
-              : (
-                <Circle
-                  key={z.id}
-                  center={[z.latitude, z.longitude]}
-                  radius={Number(z.radius_km) * 1000}
-                  pathOptions={{ color: '#10b981', fillOpacity: 0.1 }}
-                />
-              )
+          {/* sanctuary zones (circles / polygons) */}
+          {zones.map((z) =>
+            z.boundary ? (
+              <GeoJSON
+                key={z.id}
+                data={JSON.parse(z.boundary)}
+                style={{ color: '#10b981', weight: 2, fillOpacity: 0.1 }}
+              />
+            ) : (
+              <Circle
+                key={z.id}
+                center={[z.latitude, z.longitude]}
+                radius={Number(z.radius_km) * 1000}
+                pathOptions={{ color: '#10b981', fillOpacity: 0.1 }}
+              />
+            )
+          )}
+
+          {/* sanctuary markers 🆕 */}
+          {sanctuaries.map((s) => (
+            <Marker
+              key={s.id}
+              icon={sanctuaryIcon}
+              position={[s.lat, s.lng]}
+            >
+              <Popup>
+                <div className="text-sm">
+                  <strong>{s.name}</strong>
+                  {s.logo && (
+                    <img
+                      src={s.logo}
+                      alt={s.name}
+                      className="mt-1 h-16 object-cover rounded"
+                    />
+                  )}
+                </div>
+              </Popup>
+            </Marker>
           ))}
 
-          {/* saved sightings */}
+          {/* saved stray sightings */}
           {sightings.map((s) => (
             <Marker
               key={s.id}
-              position={[
-                parseFloat(s.latitude),
-                parseFloat(s.longitude),
-              ]}
+              position={[parseFloat(s.latitude), parseFloat(s.longitude)]}
             >
               <Popup ref={s.id === highlightId ? popupRef : null}>
                 <div className="text-sm space-y-2">
@@ -220,9 +260,14 @@ export default function MapView({
                       className="rounded max-h-32 w-full object-cover"
                     />
                   )}
-                  <p><strong>Notes:</strong> {s.notes || '—'}</p>
-                  <p><strong>Condition:</strong> {s.behaviour}</p>
-                  <p><strong>Reported:</strong>{' '}
+                  <p>
+                    <strong>Notes:</strong> {s.notes || '—'}
+                  </p>
+                  <p>
+                    <strong>Condition:</strong> {s.behaviour}
+                  </p>
+                  <p>
+                    <strong>Reported:</strong>{' '}
                     {new Date(s.created_at).toLocaleString()}
                   </p>
                   {user && s.user_id === user.id && (
@@ -238,12 +283,12 @@ export default function MapView({
             </Marker>
           ))}
 
-          {/* provisional marker while reporting */}
+          {/* provisional marker */}
           {clickedLocation && <Marker position={clickedLocation} />}
         </MapContainer>
       </div>
 
-      {/* LOGOUT BUTTON */}
+      {/* LOGOUT + STATUS */}
       <button
         onClick={logout}
         className="absolute top-4 left-4 z-[100] bg-white text-black px-3 py-1 rounded shadow"
@@ -251,10 +296,11 @@ export default function MapView({
         Log out
       </button>
 
-      {/* USER PANEL */}
       {user ? (
         <div className="absolute top-4 right-4 z-[100] bg-white text-black text-xs px-3 py-1 rounded shadow">
-          Logged in as:<br /><strong>{user.email}</strong>
+          Logged in as:
+          <br />
+          <strong>{user.email}</strong>
         </div>
       ) : (
         <div className="absolute top-4 right-4 z-[100] bg-red-200 text-black text-xs px-3 py-1 rounded shadow">
@@ -262,13 +308,15 @@ export default function MapView({
         </div>
       )}
 
-      {/* REPORT FORM */}
+      {/* REPORT FORM (unchanged) */}
       {clickedLocation && (
         <form
           onSubmit={handleSubmit}
           className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white p-4 shadow-md rounded-lg w-[90%] max-w-md z-[50]"
         >
-          <h2 className="text-lg font-semibold mb-2">Report Stray Sighting</h2>
+          <h2 className="text-lg font-semibold mb-2">
+            Report Stray Sighting
+          </h2>
 
           <textarea
             placeholder="Describe what you saw…"
@@ -288,7 +336,9 @@ export default function MapView({
           </label>
 
           <label className="block mb-3">
-            <span className="text-sm font-medium">Who can view this report?</span>
+            <span className="text-sm font-medium">
+              Who can view this report?
+            </span>
             <select
               value={visibility}
               onChange={(e) => setVisibility(e.target.value)}
