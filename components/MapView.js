@@ -1,204 +1,180 @@
 // components/MapView.js
-
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
-import { useState, useEffect } from 'react';
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Circle,
+  GeoJSON,
+  useMapEvents
+} from 'react-leaflet';
+import { useState, useEffect, useRef } from 'react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import { supabase } from '../lib/supabaseClient'; // ensure this path is correct
+import { supabase } from '../lib/supabaseClient';
 
-// Fix Leaflet’s default marker icon URLs in React:
+/* ---------- Fix Leaflet default icons ---------- */
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconUrl: 'https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png',
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon-2x.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.3/dist/images/marker-shadow.png',
+  iconUrl:
+    'https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png',
+  iconRetinaUrl:
+    'https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon-2x.png',
+  shadowUrl:
+    'https://unpkg.com/leaflet@1.9.3/dist/images/marker-shadow.png',
 });
 
-// Component to capture map clicks and pass the lat/lng upward
+/* ---------- Tap handler ---------- */
 function TapHandler({ onMapClick }) {
-  useMapEvents({
-    click(e) {
-      onMapClick(e.latlng);
-    },
-  });
+  useMapEvents({ click: (e) => onMapClick(e.latlng) });
   return null;
 }
 
-export default function MapView() {
-  const [clickedLocation, setClickedLocation] = useState(null); // { lat, lng } or null
-  const [notes, setNotes] = useState('');
-  const [isInjured, setIsInjured] = useState(false);
-  const [photoFile, setPhotoFile] = useState(null);
-  const [sightings, setSightings] = useState([]); // array of rows from DB
-  const [user, setUser] = useState(null);         // currently logged‐in user
+/* ========================================================= */
+export default function MapView({
+  focusLat = null,
+  focusLng = null,
+  highlightId = null,
+}) {
+  const [clickedLocation, setClickedLocation] = useState(null);
+  const [notes,        setNotes]        = useState('');
+  const [isInjured,    setIsInjured]    = useState(false);
+  const [photoFile,    setPhotoFile]    = useState(null);
+  const [visibility,   setVisibility]   = useState('public');
+  const [sightings,    setSightings]    = useState([]);
+  const [zones,        setZones]        = useState([]);   // ← sanctuary circles / polygons
+  const [user,         setUser]         = useState(null);
+  const [mapReady,     setMapReady]     = useState(false);
 
-  // On mount: fetch current user and all sightings
+  const mapRef   = useRef(null);
+  const popupRef = useRef(null);
+
+  /* ----- initial fetch ----- */
   useEffect(() => {
-    async function initialize() {
-      // 1) Get logged-in user
-      const {
-        data: { user: currentUser },
-        error: userError,
-      } = await supabase.auth.getUser();
-      if (!userError && currentUser) {
-        setUser(currentUser);
-      }
+    (async () => {
+      /* current user */
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) setUser(currentUser);
 
-      // 2) Fetch all sightings, including user_id
-      const { data: rows, error: fetchError } = await supabase
+      /* sightings list */
+      const { data: sdata } = await supabase
         .from('sightings')
-        .select(`
-          id,
-          latitude,
-          longitude,
-          notes,
-          behaviour,
-          photo_url,
-          created_at,
-          user_id
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
+      if (sdata) setSightings(sdata);
 
-      if (!fetchError && rows) {
-        setSightings(rows);
-      } else if (fetchError) {
-        console.error('Error loading sightings:', fetchError.message);
-      }
-    }
-
-    initialize();
+      /* approved sanctuaries (centre, radius, optional polygon) */
+      const { data: zdata } = await supabase
+        .from('sanctuaries')
+        .select('id, latitude, longitude, radius_km, boundary')
+        .eq('approved', true);
+      if (zdata) setZones(zdata);
+    })();
   }, []);
 
-  // Handle new sighting submission (with user_id)
+  /* ----- deep-link centring ----- */
+  useEffect(() => {
+    if (!mapReady || focusLat == null || focusLng == null) return;
+    mapRef.current.flyTo([focusLat, focusLng], 17, { animate: true });
+    setTimeout(() => {
+      if (popupRef.current && popupRef.current.getLatLng) {
+        popupRef.current.openOn(mapRef.current);
+      }
+    }, 400);
+  }, [mapReady, focusLat, focusLng]);
+
+  /* ----- centre on new pin ----- */
+  useEffect(() => {
+    if (!mapReady || !clickedLocation) return;
+    mapRef.current.flyTo(
+      [clickedLocation.lat, clickedLocation.lng],
+      17,
+      { animate: true }
+    );
+  }, [mapReady, clickedLocation]);
+
+  /* ----- submit new sighting ----- */
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!user) {
-      alert('Please log in to report a sighting.');
-      return;
-    }
+    if (!user) return alert('Please log in first');
+
     const { lat, lng } = clickedLocation;
     let photoUrl = null;
 
-    // 1) Upload photo if provided
     if (photoFile) {
-      const filename = `${Date.now()}-${photoFile.name}`;
-      const { error: uploadError } = await supabase.storage
+      const fileName = `${Date.now()}-${photoFile.name}`;
+      const { error: uploadErr } = await supabase.storage
         .from('sightings')
-        .upload(filename, photoFile);
+        .upload(fileName, photoFile);
+      if (uploadErr) return alert('Photo upload failed');
 
-      if (uploadError) {
-        console.error('Image upload error:', uploadError.message);
-        alert('Failed to upload photo');
-        return;
-      }
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from('sightings').getPublicUrl(filename);
+      const { data: { publicUrl } } = supabase.storage
+        .from('sightings')
+        .getPublicUrl(fileName);
       photoUrl = publicUrl;
     }
 
-    // 2) Insert the new sighting, including user_id = user.id
-    const { data: newSighting, error: insertError } = await supabase
+    const { data: newRow, error: insertErr } = await supabase
       .from('sightings')
-      .insert([
-        {
-          latitude: lat.toString(),
-          longitude: lng.toString(),
-          notes,
-          animals: 1,
-          behaviour: isInjured ? 'injured' : 'normal',
-          photo_url: photoUrl,
-          user_id: user.id, // record ownership
-        },
-      ])
+      .insert([{
+        latitude:  lat.toString(),
+        longitude: lng.toString(),
+        notes,
+        animals:   1,
+        behaviour: isInjured ? 'injured' : 'normal',
+        photo_url: photoUrl,
+        user_id:   user.id,
+        visibility,
+      }])
       .select()
       .single();
 
-    if (insertError) {
-      console.error('Insert error:', insertError.message);
-      alert(`Failed to save: ${insertError.message}`);
-      return;
-    }
-
-    // 3) Update local state so the new marker appears immediately
-    setSightings((prev) => [...prev, newSighting]);
-
-    // 4) Reset form + pin
-    setClickedLocation(null);
-    setNotes('');
-    setIsInjured(false);
-    setPhotoFile(null);
+    if (insertErr) return alert(`Save failed: ${insertErr.message}`);
+    setSightings((prev) => [...prev, newRow]);
+    resetForm();
   };
 
-  // Handle deletion: prompt for reason, log it, then delete the row
-  const handleDelete = async (sighting) => {
-    if (!user) {
-      alert('You must be logged in to delete a sighting.');
-      return;
-    }
-    // 1) Prompt for deletion reason
-    const reason = window.prompt('Enter a reason for deletion:');
-    if (!reason || reason.trim() === '') {
-      alert('Deletion cancelled: reason is required.');
-      return;
-    }
+  /* ----- delete sighting ----- */
+  const handleDelete = async (s) => {
+    if (!user) return alert('Log in first');
+    const reason = window.prompt('Reason for deletion:');
+    if (!reason) return;
 
-    // 2) Insert into deletion_logs
-    const { error: logError } = await supabase
-      .from('deletion_logs')
-      .insert([
-        {
-          sighting_id: sighting.id,
-          user_id: user.id,
-          reason: reason.trim(),
-        },
-      ]);
-
-    if (logError) {
-      console.error('Error logging deletion:', logError.message);
-      alert('Failed to log deletion. Aborting.');
-      return;
-    }
-
-    // 3) Delete the sighting from the DB
-    const { error: deleteError } = await supabase
-      .from('sightings')
+    await supabase.from('deletion_logs')
+      .insert([{ sighting_id: s.id, user_id: user.id, reason }]);
+    await supabase.from('sightings')
       .delete()
-      .eq('id', sighting.id);
-
-    if (deleteError) {
-      console.error('Deletion error:', deleteError.message);
-      alert('Failed to delete sighting. Try again.');
-      return;
-    }
-
-    // 4) Remove it from local state so the marker disappears
-    setSightings((prev) => prev.filter((s) => s.id !== sighting.id));
+      .eq('id', s.id);
+    setSightings((prev) => prev.filter((row) => row.id !== s.id));
   };
 
-  // Log out the user
-  const handleLogout = async () => {
+  /* ----- helpers ----- */
+  const logout = async () => {
     await supabase.auth.signOut();
     window.location.href = '/';
   };
-
-  // Cancel pin + reset form
-  const handleCancel = () => {
+  const resetForm = () => {
     setClickedLocation(null);
     setNotes('');
     setIsInjured(false);
     setPhotoFile(null);
+    setVisibility('public');
   };
 
+  /* ----- render ----- */
   return (
     <div className="relative h-screen w-screen">
-      {/* ==================== MAP ==================== */}
+      {/* MAP LAYER */}
       <div className="absolute inset-0 z-[1]">
         <MapContainer
           center={[38.8333, 20.7]}
           zoom={13}
-          scrollWheelZoom={true}
+          whenReady={({ target }) => {
+            mapRef.current = target;
+            setMapReady(true);
+          }}
           style={{ height: '100%', width: '100%' }}
+          scrollWheelZoom
         >
           <TileLayer
             attribution="&copy; OpenStreetMap contributors"
@@ -206,39 +182,52 @@ export default function MapView() {
           />
           <TapHandler onMapClick={setClickedLocation} />
 
-          {/* Render all saved sightings */}
-          {sightings.map((sighting) => (
+          {/* sanctuary zones */}
+          {zones.map(z => (
+            z.boundary
+              ? (
+                <GeoJSON
+                  key={z.id}
+                  data={JSON.parse(z.boundary)}
+                  style={{ color: '#10b981', weight: 2, fillOpacity: 0.1 }}
+                />
+              )
+              : (
+                <Circle
+                  key={z.id}
+                  center={[z.latitude, z.longitude]}
+                  radius={Number(z.radius_km) * 1000}
+                  pathOptions={{ color: '#10b981', fillOpacity: 0.1 }}
+                />
+              )
+          ))}
+
+          {/* saved sightings */}
+          {sightings.map((s) => (
             <Marker
-              key={sighting.id}
+              key={s.id}
               position={[
-                parseFloat(sighting.latitude),
-                parseFloat(sighting.longitude),
+                parseFloat(s.latitude),
+                parseFloat(s.longitude),
               ]}
             >
-              <Popup>
+              <Popup ref={s.id === highlightId ? popupRef : null}>
                 <div className="text-sm space-y-2">
-                  {sighting.photo_url && (
+                  {s.photo_url && (
                     <img
-                      src={sighting.photo_url}
+                      src={s.photo_url}
                       alt="Sighting"
                       className="rounded max-h-32 w-full object-cover"
                     />
                   )}
-                  <p>
-                    <strong>Notes:</strong> {sighting.notes || 'No notes'}
+                  <p><strong>Notes:</strong> {s.notes || '—'}</p>
+                  <p><strong>Condition:</strong> {s.behaviour}</p>
+                  <p><strong>Reported:</strong>{' '}
+                    {new Date(s.created_at).toLocaleString()}
                   </p>
-                  <p>
-                    <strong>Condition:</strong> {sighting.behaviour}
-                  </p>
-                  <p>
-                    <strong>Reported:</strong>{' '}
-                    {new Date(sighting.created_at).toLocaleString()}
-                  </p>
-
-                  {/* Only show “Delete” if current user owns this row */}
-                  {user && sighting.user_id === user.id && (
+                  {user && s.user_id === user.id && (
                     <button
-                      onClick={() => handleDelete(sighting)}
+                      onClick={() => handleDelete(s)}
                       className="mt-2 w-full bg-red-600 text-white py-1 rounded hover:bg-red-700"
                     >
                       Delete
@@ -249,24 +238,23 @@ export default function MapView() {
             </Marker>
           ))}
 
-          {/* Temporary marker while placing a new sighting */}
+          {/* provisional marker while reporting */}
           {clickedLocation && <Marker position={clickedLocation} />}
         </MapContainer>
       </div>
 
-      {/* ==================== LOGOUT BUTTON ==================== */}
+      {/* LOGOUT BUTTON */}
       <button
-        onClick={handleLogout}
+        onClick={logout}
         className="absolute top-4 left-4 z-[100] bg-white text-black px-3 py-1 rounded shadow"
       >
         Log out
       </button>
 
-      {/* ==================== USER STATUS ==================== */}
+      {/* USER PANEL */}
       {user ? (
         <div className="absolute top-4 right-4 z-[100] bg-white text-black text-xs px-3 py-1 rounded shadow">
-          Logged in as:<br />
-          <strong>{user.email}</strong>
+          Logged in as:<br /><strong>{user.email}</strong>
         </div>
       ) : (
         <div className="absolute top-4 right-4 z-[100] bg-red-200 text-black text-xs px-3 py-1 rounded shadow">
@@ -274,20 +262,22 @@ export default function MapView() {
         </div>
       )}
 
-      {/* ==================== REPORT FORM OVERLAY ==================== */}
+      {/* REPORT FORM */}
       {clickedLocation && (
         <form
           onSubmit={handleSubmit}
-          className="fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-white p-4 shadow-md rounded-lg w-[90%] max-w-md z-[50]"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-white p-4 shadow-md rounded-lg w-[90%] max-w-md z-[50]"
         >
           <h2 className="text-lg font-semibold mb-2">Report Stray Sighting</h2>
+
           <textarea
-            placeholder="Describe what you saw..."
+            placeholder="Describe what you saw…"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             className="w-full p-2 border rounded mb-2"
             rows={3}
           />
+
           <label className="flex items-center space-x-2 mb-3">
             <input
               type="checkbox"
@@ -296,12 +286,27 @@ export default function MapView() {
             />
             <span>Animal appears injured</span>
           </label>
+
+          <label className="block mb-3">
+            <span className="text-sm font-medium">Who can view this report?</span>
+            <select
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value)}
+              className="mt-1 w-full border rounded p-2"
+            >
+              <option value="public">Public</option>
+              <option value="caregiver">Caregivers only</option>
+              <option value="admin">Admins only</option>
+            </select>
+          </label>
+
           <input
             type="file"
             accept="image/*"
             onChange={(e) => setPhotoFile(e.target.files[0])}
             className="mb-3"
           />
+
           <div className="flex gap-2">
             <button
               type="submit"
@@ -311,7 +316,7 @@ export default function MapView() {
             </button>
             <button
               type="button"
-              onClick={handleCancel}
+              onClick={resetForm}
               className="flex-1 bg-gray-300 text-black py-2 rounded hover:bg-gray-400"
             >
               Cancel
